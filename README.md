@@ -17,8 +17,11 @@ from obligra_verify import VerifyClient
 
 client = VerifyClient(
     api_key="obv_your_key_here",
-    base_url="https://y1h3onv0f1.execute-api.us-east-1.amazonaws.com/dev",
+    base_url="https://api.obligra.ai/api/v1",
 )
+```
+
+> **Preview period:** Until the production domain is live, use the preview URL provided in your onboarding email.
 
 # Create a decision record
 result = client.create_record(
@@ -49,7 +52,20 @@ results = client.search_records(workflow_id="claim-review", limit=10)
 | Variable | Description |
 |----------|-------------|
 | `VERIFY_API_KEY` | Verify API key (fallback if not passed to constructor) |
-| `VERIFY_BASE_URL` | Verify API base URL (fallback if not passed to constructor) |
+| `VERIFY_BASE_URL` | Verify API base URL (fallback if not passed to constructor). Use `https://api.obligra.ai/api/v1` for production. |
+
+## Auth Model
+
+The SDK supports two authentication flows:
+
+| Method | Auth | Use Case |
+|--------|------|----------|
+| `create_record()` | API key (`X-Verify-Api-Key`) | Customer capture flow — primary SDK path |
+| `get_record()` | Cognito session (console) | Admin/tooling — not available via API key |
+| `verify_record()` | Cognito session (console) | Admin/tooling — not available via API key |
+| `search_records()` | Cognito session (console) | Admin/tooling — not available via API key |
+
+For normal integration, use `create_record()`. The returned `decisionRecordId` can be used to retrieve and verify records through the Verify Console.
 
 ## API
 
