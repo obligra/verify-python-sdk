@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "obligra-verify"
+version = "0.1.0"
+description = "Obligra Verify Python SDK — capture, retrieve, and verify AI decision records"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.9"
+authors = [{ name = "Obligra", email = "support@obligra.ai" }]
+keywords = ["ai", "governance", "verify", "decision-records", "audit"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/obligra/verify-python-sdk"
+Documentation = "https://github.com/obligra/verify-python-sdk"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/obligra_verify"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
