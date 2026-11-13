@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "obligra-verify"
 version = "0.1.0"
-description = "Obligra Verify Python SDK — capture, retrieve, and verify AI decision records"
+description = "Obligra Verify Python SDK — explicit server-side capture of AI decision records"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.9"

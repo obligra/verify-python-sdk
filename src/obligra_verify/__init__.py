@@ -7,9 +7,16 @@ import time
 import json
 import urllib.request
 import urllib.error
+import urllib.parse
+import copy
 from typing import Any
 
 __version__ = "0.1.0"
+
+def _utf16_length(value: str) -> int:
+    """Match JavaScript validator string.length (UTF-16 code units)."""
+    return len(value.encode("utf-16-le", errors="surrogatepass")) // 2
+
 
 UNSUPPORTED_FIELDS = frozenset({"output", "result", "completion", "answer", "generation"})
 
@@ -35,7 +42,7 @@ class VerifyClient:
         api_key: Verify API key. Falls back to VERIFY_API_KEY env var.
         base_url: Verify API base URL. Falls back to VERIFY_BASE_URL env var.
         timeout: Request timeout in seconds. Default 15.
-        max_retries: Max retry attempts for transient failures. Default 2.
+        max_retries: Legacy compatibility option; capture POSTs are never retried.
     """
 
     def __init__(
@@ -55,7 +62,15 @@ class VerifyClient:
         if not self._base_url:
             raise VerifyError("base_url is required. Pass it directly or set VERIFY_BASE_URL.", code="MISSING_BASE_URL")
 
+        if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or not 0 < timeout < float("inf"):
+            raise VerifyError("timeout must be finite and positive.", code="INVALID_TIMEOUT")
+        if not isinstance(max_retries, int) or isinstance(max_retries, bool) or max_retries < 0:
+            raise VerifyError("max_retries must be a non-negative integer.", code="INVALID_RETRIES")
         self._base_url = self._base_url.rstrip("/")
+        parsed = urllib.parse.urlsplit(self._base_url)
+        local_http = parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1", "::1")
+        if (parsed.scheme != "https" and not local_http) or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path:
+            raise VerifyError("Use an HTTPS API origin without /api/v1, credentials, query or fragment. HTTP is allowed only for loopback testing.", code="INVALID_BASE_URL")
 
     def create_record(
         self,
@@ -68,6 +83,7 @@ class VerifyClient:
         retrieval_key: str | list[str] | None = None,
         metadata: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
+        ai_assisted_context: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Create a decision record.
 
@@ -75,11 +91,12 @@ class VerifyClient:
             workflow_id: Required workflow identifier.
             prompt: Input to the AI model.
             response: Output from the AI model.
-            model: Dict with 'provider' and/or 'modelId'.
+            model: Dict with required 'provider' and 'modelId'.
             operational_context: Additional context fields.
-            retrieval_key: One or more retrieval keys.
-            metadata: Arbitrary metadata.
-            idempotency_key: Idempotency key for deduplication.
+            retrieval_key: Unsupported; use operational_context lookup values.
+            metadata: Unsupported by the current capture contract.
+            idempotency_key: Unsupported; no server deduplication is claimed.
+            ai_assisted_context: Lossless string-to-string AI context.
 
         Returns:
             API response dict with decisionRecordId, status, etc.
@@ -87,25 +104,32 @@ class VerifyClient:
         if not workflow_id:
             raise VerifyError("workflow_id is required.", code="MISSING_WORKFLOW_ID")
 
-        body: dict[str, Any] = {"workflowId": workflow_id}
-
-        if operational_context:
-            self._validate_fields(operational_context)
-            body["operationalContext"] = operational_context
-
-        if prompt is not None:
-            body.setdefault("operationalContext", {})["prompt"] = prompt
-        if response is not None:
-            body.setdefault("operationalContext", {})["response"] = response
-        if model is not None:
-            body["model"] = model
-        if retrieval_key is not None:
-            body["retrievalKey"] = retrieval_key if isinstance(retrieval_key, list) else [retrieval_key]
-        if metadata is not None:
-            body["metadata"] = metadata
-        if idempotency_key is not None:
-            body["idempotencyKey"] = idempotency_key
-
+        if not isinstance(workflow_id, str) or not workflow_id.strip() or _utf16_length(workflow_id) > 128:
+            raise VerifyError("workflow_id must be a non-empty string of at most 128 characters.", code="INVALID_WORKFLOW_ID")
+        if any(v is not None for v in (retrieval_key, metadata, idempotency_key)):
+            raise VerifyError("retrieval_key, metadata and idempotency_key are not supported by the capture contract. Put short lookup values in operational_context.", code="UNSUPPORTED_FIELD")
+        context = copy.deepcopy(operational_context) if operational_context is not None else {}
+        if not isinstance(context, dict) or len(context) > 20:
+            raise VerifyError("operational_context must be a dict with at most 20 lookup values.", code="INVALID_OPERATIONAL_CONTEXT")
+        for key, value in context.items():
+            if not isinstance(key, str) or _utf16_length(key) > 64 or not isinstance(value, str) or _utf16_length(value) > 128:
+                raise VerifyError("operational_context requires string keys (max 64) and string values (max 128).", code="INVALID_OPERATIONAL_CONTEXT")
+        self._validate_fields(context)
+        if not isinstance(model, dict) or any(not isinstance(model.get(k), str) or not model[k] or _utf16_length(model[k]) > n for k, n in (("provider", 64), ("modelId", 128))):
+            raise VerifyError("model requires provider (max 64) and modelId (max 128) strings.", code="INVALID_MODEL")
+        ai = copy.deepcopy(ai_assisted_context) if ai_assisted_context is not None else {}
+        if not isinstance(ai, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in ai.items()):
+            raise VerifyError("ai_assisted_context must contain string keys and values.", code="INVALID_AI_CONTEXT")
+        for key, value in (("prompt", prompt), ("response", response)):
+            if value is not None:
+                if not isinstance(value, str) or (key in ai and ai[key] != value):
+                    raise VerifyError("Prompt/response must be strings and must not conflict with ai_assisted_context.", code="INVALID_AI_CONTEXT")
+                ai[key] = value
+        body: dict[str, Any] = {"workflowId": workflow_id, "operationalContext": context, "model": {k: model[k] for k in ("provider", "modelId")}}
+        if ai:
+            body["aiAssistedContext"] = ai
+        if len(json.dumps(body).encode("utf-8")) > 256 * 1024:
+            raise VerifyError("Capture payload exceeds 256 KiB.", code="PAYLOAD_TOO_LARGE")
         return self._request("POST", "/decision-records", body=body)
 
     def get_record(self, record_id: str) -> dict[str, Any]:
@@ -119,7 +143,7 @@ class VerifyClient:
         """
         if not record_id:
             raise VerifyError("record_id is required.", code="MISSING_RECORD_ID")
-        return self._request("GET", f"/decision-records/{record_id}")
+        raise VerifyError("Use the Verify Console to retrieve records. This API-key client does not support Cognito sessions.", code="CONSOLE_AUTH_REQUIRED")
 
     def verify_record(self, record_id: str) -> dict[str, Any]:
         """Verify a decision record's integrity.
@@ -132,7 +156,7 @@ class VerifyClient:
         """
         if not record_id:
             raise VerifyError("record_id is required.", code="MISSING_RECORD_ID")
-        return self._request("POST", f"/decision-records/{record_id}/verify")
+        raise VerifyError("Use the Verify Console to verify records. This API-key client does not support Cognito sessions.", code="CONSOLE_AUTH_REQUIRED")
 
     def search_records(
         self,
@@ -153,16 +177,7 @@ class VerifyClient:
         Returns:
             Dict with records list, count, hasMore, nextCursor.
         """
-        params: dict[str, str] = {"limit": str(min(max(limit, 1), 100))}
-        if workflow_id:
-            params["workflowId"] = workflow_id
-        if environment_id:
-            params["environmentId"] = environment_id
-        if cursor:
-            params["cursor"] = cursor
-
-        query = "&".join(f"{k}={v}" for k, v in params.items())
-        return self._request("GET", f"/decision-records?{query}")
+        raise VerifyError("Use the Verify Console to search records. This API-key client does not support Cognito sessions.", code="CONSOLE_AUTH_REQUIRED")
 
     def _validate_fields(self, context: dict[str, Any]) -> None:
         """Reject unsupported field names."""
@@ -183,38 +198,60 @@ class VerifyClient:
         }
 
         last_error: Exception | None = None
-        for attempt in range(self._max_retries + 1):
+        retries = 0 if method == "POST" else self._max_retries
+        for attempt in range(retries + 1):
             try:
                 req = urllib.request.Request(url, data=data, headers=headers, method=method)
-                with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-                    resp_body = resp.read().decode()
-                    return json.loads(resp_body) if resp_body else {}
+                opener = urllib.request.build_opener(_NoRedirect)
+                with opener.open(req, timeout=self._timeout) as resp:
+                    raw = resp.read(1024 * 1024 + 1)
+                    if len(raw) > 1024 * 1024:
+                        raise VerifyError("Response exceeds 1 MiB; capture outcome unknown.", code="INVALID_RESPONSE")
+                    try:
+                        resp_body = raw.decode("utf-8")
+                    except UnicodeError as e:
+                        raise VerifyError("Response is not UTF-8; capture outcome unknown.", code="INVALID_RESPONSE") from e
+                    try:
+                        result = json.loads(resp_body)
+                    except (ValueError, TypeError) as e:
+                        raise VerifyError("Capture response is not valid JSON; outcome is unknown. Do not automatically retry.", code="INVALID_RESPONSE") from e
+                    if not isinstance(result, dict) or not isinstance(result.get("decisionRecordId"), str) or not result["decisionRecordId"].strip():
+                        raise VerifyError("Capture response has no record ID; outcome is unknown. Do not automatically retry.", code="INVALID_RESPONSE")
+                    return result
             except urllib.error.HTTPError as e:
-                resp_body = e.read().decode() if e.fp else ""
+                resp_body = e.read(1024 * 1024).decode("utf-8", errors="replace") if e.fp else ""
                 parsed = {}
                 try:
                     parsed = json.loads(resp_body)
                 except (json.JSONDecodeError, ValueError):
                     pass
 
+                if not isinstance(parsed, dict):
+                    parsed = {}
+
                 # Don't retry client errors (4xx)
                 if 400 <= e.code < 500:
                     raise VerifyError(
                         parsed.get("message", f"HTTP {e.code}"),
                         status_code=e.code,
-                        code=parsed.get("error", parsed.get("code")),
+                        code=parsed.get("code", parsed.get("error")),
                     ) from e
 
                 last_error = VerifyError(
                     parsed.get("message", f"HTTP {e.code}"),
                     status_code=e.code,
-                    code=parsed.get("error"),
+                    code=parsed.get("code", parsed.get("error")),
                 )
             except (urllib.error.URLError, TimeoutError, OSError) as e:
                 last_error = VerifyError(f"Request failed: {e}", code="NETWORK_ERROR")
 
             # Exponential backoff before retry
-            if attempt < self._max_retries:
+            if attempt < retries:
                 time.sleep(0.5 * (2 ** attempt))
 
         raise last_error  # type: ignore[misc]
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise VerifyError("Redirect refused to protect API credentials; check the API origin.", code="REDIRECT_REFUSED")
