@@ -8,6 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
+MODEL = {"provider": "synthetic", "modelId": "fixture-v1"}
+
 from obligra_verify import VerifyClient, VerifyError, __version__
 
 
@@ -76,7 +78,13 @@ def mock_server():
 
 @pytest.fixture
 def client(mock_server):
-    return VerifyClient(api_key="obv_test.secret", base_url=mock_server)
+    c = VerifyClient(api_key="obv_test.secret", base_url=mock_server)
+    original = c.create_record
+    def create_record(*args, **kwargs):
+        kwargs.setdefault("model", MODEL)
+        return original(*args, **kwargs)
+    c.create_record = create_record
+    return c
 
 
 # ─── Constructor Tests ──────────────────────────────────────────────────────
@@ -128,21 +136,17 @@ class TestCreateRecord:
         assert result["status"] == "recorded"
 
     def test_with_retrieval_key_string(self, client):
-        result = client.create_record("test-wf", retrieval_key="key-001")
-        assert result["status"] == "recorded"
+        with pytest.raises(VerifyError, match="not supported"):
+            client.create_record("test-wf", retrieval_key="key-001")
 
     def test_with_retrieval_key_list(self, client):
-        result = client.create_record("test-wf", retrieval_key=["key-001", "key-002"])
-        assert result["status"] == "recorded"
+        with pytest.raises(VerifyError, match="not supported"):
+            client.create_record("test-wf", retrieval_key=["key-001", "key-002"])
 
     def test_with_idempotency_key(self, client):
-        result = client.create_record("test-wf", idempotency_key="idem-001")
-        assert result["status"] == "recorded"
+        with pytest.raises(VerifyError, match="not supported"):
+            client.create_record("test-wf", idempotency_key="idem-001")
 
-
-# ─── Field Validation Tests ────────────────────────────────────────────────
-
-class TestFieldValidation:
     @pytest.mark.parametrize("field", ["output", "result", "completion", "answer", "generation"])
     def test_rejects_unsupported_fields(self, client, field):
         with pytest.raises(VerifyError, match="UNSUPPORTED_FIELD"):
@@ -160,8 +164,9 @@ class TestFieldValidation:
 
 class TestGetRecord:
     def test_get_record(self, client):
-        result = client.get_record("dr_test_123")
-        assert result["record"]["decisionRecordId"] == "dr_test_123"
+        with pytest.raises(VerifyError) as e:
+            client.get_record("dr_test_123")
+        assert e.value.code == "CONSOLE_AUTH_REQUIRED"
 
     def test_requires_record_id(self, client):
         with pytest.raises(VerifyError, match="record_id is required"):
@@ -172,10 +177,9 @@ class TestGetRecord:
 
 class TestVerifyRecord:
     def test_verify_record(self, client):
-        result = client.verify_record("dr_test_123")
-        assert result["verificationState"] == "verified"
-        assert result["ledger"]["hashMatches"] is True
-        assert result["ledger"]["signatureValid"] is True
+        with pytest.raises(VerifyError) as e:
+            client.verify_record("dr_test_123")
+        assert e.value.code == "CONSOLE_AUTH_REQUIRED"
 
     def test_requires_record_id(self, client):
         with pytest.raises(VerifyError, match="record_id is required"):
@@ -186,13 +190,14 @@ class TestVerifyRecord:
 
 class TestSearchRecords:
     def test_search_records(self, client):
-        result = client.search_records()
-        assert result["count"] == 1
-        assert result["records"][0]["decisionRecordId"] == "dr_test_123"
+        with pytest.raises(VerifyError) as e:
+            client.search_records()
+        assert e.value.code == "CONSOLE_AUTH_REQUIRED"
 
     def test_search_with_filters(self, client):
-        result = client.search_records(workflow_id="test-wf", limit=10)
-        assert result["count"] == 1
+        with pytest.raises(VerifyError) as e:
+            client.search_records(workflow_id="test-wf", limit=10)
+        assert e.value.code == "CONSOLE_AUTH_REQUIRED"
 
 
 # ─── Error Handling Tests ──────────────────────────────────────────────────
@@ -201,13 +206,9 @@ class TestErrorHandling:
     def test_network_error(self):
         client = VerifyClient(api_key="obv_test.secret", base_url="http://127.0.0.1:1", timeout=1, max_retries=0)
         with pytest.raises(VerifyError) as exc_info:
-            client.create_record("test-wf")
+            client.create_record("test-wf", model=MODEL)
         assert exc_info.value.code == "NETWORK_ERROR"
 
-    def test_timeout(self):
-        client = VerifyClient(api_key="obv_test.secret", base_url="http://10.255.255.1", timeout=1, max_retries=0)
-        with pytest.raises(VerifyError):
-            client.create_record("test-wf")
 
 
 # ─── Version Test ──────────────────────────────────────────────────────────

@@ -1,8 +1,6 @@
-# Obligra Verify — Python SDK
+# Obligra Verify Python SDK
 
-> **Status: Early Preview** — APIs may change before 1.0.
-
-Zero-dependency Python client for the Obligra Verify API. Capture, retrieve, and verify AI decision records.
+Early preview. This is an explicit, server-side capture client, not automatic model interception or a file uploader. The optional customer-managed proxy is a separate integration path.
 
 ## Install
 
@@ -10,129 +8,72 @@ Zero-dependency Python client for the Obligra Verify API. Capture, retrieve, and
 pip install git+https://github.com/obligra/verify-python-sdk.git
 ```
 
-## Quick Start
+Requires Python 3.9 or newer, with no runtime dependencies.
+
+## First synthetic record
+
+Create a capture key for your Test workspace and environment in the Verify Console. Keep it in your backend secret store, never browser code or a recording. The key needs `records:write`. The authenticated key determines workspace and environment; the payload cannot select them.
+
+Set `VERIFY_API_KEY` securely in your backend environment, then run:
 
 ```python
 from obligra_verify import VerifyClient
 
-client = VerifyClient(
-    api_key="obv_your_key_here",
-    base_url="https://api.obligra.ai/api/v1",
+client = VerifyClient(base_url="https://api.obligra.ai")
+receipt = client.create_record(
+    "synthetic-first-record",
+    operational_context={"ticketId": "DEMO-001"},
+    prompt="Synthetic example: classify this demo ticket.",
+    response="Synthetic recommendation: routine review.",
+    model={"provider": "synthetic", "modelId": "demo-v1"},
 )
+print(receipt["decisionRecordId"])
 ```
 
-> **Preview period:** Until the production domain is live, use the preview URL provided in your onboarding email.
+Your application calls `create_record()` at the point it chooses to capture a record. The SDK sends that submitted context over HTTPS using `X-Verify-Api-Key` to `/decision-records`. It does not invoke a model. Use the returned ID in the Console, in the same workspace and environment, to retrieve the record and check integrity. A successful capture response is not itself an integrity-verification result.
 
-# Create a decision record
-result = client.create_record(
-    workflow_id="claim-review",
-    prompt="Review this claim for approval.",
-    response="Claim meets standard approval criteria.",
-    model={"provider": "anthropic", "modelId": "claude-sonnet-4-20250514"},
-    operational_context={
-        "ticketId": "CLAIM-001",
-        "severity": "medium",
-    },
-)
-print(result["decisionRecordId"])  # dr_...
+Use the API origin, not `/api/v1`. `VERIFY_BASE_URL` is the environment fallback if `base_url` is omitted. Confirm the intended environment before using a real key. No live end-to-end result is claimed by the local tests.
 
-# Retrieve a record
-record = client.get_record(result["decisionRecordId"])
+## Capture contract
 
-# Verify integrity
-verification = client.verify_record(result["decisionRecordId"])
-print(verification["verificationState"])  # "verified"
+- `workflow_id`: required nonblank string, maximum 128 UTF-16 units.
+- `model`: required `provider` (maximum 64) and `modelId` (maximum 128) strings; limits count UTF-16 units to match the API. Label synthetic examples honestly.
+- `operational_context`: short lookup references, up to 20 string values, maximum 128 UTF-16 units per value and 64 per key. Defaults to an empty object. Legacy reserved names `output`, `result`, `completion`, `answer` and `generation` are rejected here; use the top-level `prompt` or `response` arguments for AI text.
+- `prompt` and `response`: optional strings, retained without truncation in `aiAssistedContext`, not lookup fields.
+- `ai_assisted_context`: optional string-to-string dictionary. Conflicting prompt/response values are rejected, not overwritten.
+- Entire serialized payload: maximum 256 KiB. Oversized input is rejected, never silently shortened.
 
-# Search records
-results = client.search_records(workflow_id="claim-review", limit=10)
-```
+The earlier `retrieval_key`, `metadata` and `idempotency_key` arguments remain recognized but now raise `UNSUPPORTED_FIELD`: the current capture validator does not retain these top-level fields. Put short retrieval values in `operational_context`. Do not rely on server-side deduplication from an idempotency argument.
 
-## Environment Variables
+`get_record()`, `verify_record()` and `search_records()` raise `CONSOLE_AUTH_REQUIRED`. Those operations require Console authentication; this API-key client does not implement Cognito sessions. Earlier mock tests did not prove API-key access to those operations.
 
-| Variable | Description |
-|----------|-------------|
-| `VERIFY_API_KEY` | Verify API key (fallback if not passed to constructor) |
-| `VERIFY_BASE_URL` | Verify API base URL (fallback if not passed to constructor). Use `https://api.obligra.ai/api/v1` for production. |
-
-## Auth Model
-
-The SDK supports two authentication flows:
-
-| Method | Auth | Use Case |
-|--------|------|----------|
-| `create_record()` | API key (`X-Verify-Api-Key`) | Customer capture flow — primary SDK path |
-| `get_record()` | Cognito session (console) | Admin/tooling — not available via API key |
-| `verify_record()` | Cognito session (console) | Admin/tooling — not available via API key |
-| `search_records()` | Cognito session (console) | Admin/tooling — not available via API key |
-
-For normal integration, use `create_record()`. The returned `decisionRecordId` can be used to retrieve and verify records through the Verify Console.
-
-## API
-
-### VerifyClient(api_key, base_url, timeout=15, max_retries=2)
-
-Constructor. Both `api_key` and `base_url` are required (via argument or env var).
-
-### client.create_record(workflow_id, *, prompt, response, model, operational_context, retrieval_key, metadata, idempotency_key)
-
-Create a decision record. Returns dict with `decisionRecordId`, `status`.
-
-### client.get_record(record_id)
-
-Retrieve a record by ID. Returns dict with `record` containing full detail.
-
-### client.verify_record(record_id)
-
-Verify record integrity. Returns dict with `verificationState`, `ledger`.
-
-### client.search_records(*, workflow_id, environment_id, limit, cursor)
-
-Search records with optional filters. Returns dict with `records`, `count`, `hasMore`, `nextCursor`.
-
-## Field Contract
-
-**Supported fields:**
-- `prompt` — input to the AI model
-- `response` — output from the AI model
-- `model` — `{"provider": "...", "modelId": "..."}`
-- `workflow_id` — workflow identifier (required)
-- `operational_context` — additional context dict
-- `retrieval_key` — search key(s)
-- `metadata` — arbitrary metadata
-- `idempotency_key` — deduplication key
-
-**Rejected fields** (raises `UNSUPPORTED_FIELD` error):
-- `output`, `result`, `completion`, `answer`, `generation`
-
-## Error Handling
+## Errors and retries
 
 ```python
-from obligra_verify import VerifyClient, VerifyError
+from obligra_verify import VerifyError
 
 try:
-    client.create_record("my-workflow", prompt="...")
-except VerifyError as e:
-    print(e.code)         # "UNSUPPORTED_FIELD", "MISSING_API_KEY", etc.
-    print(e.status_code)  # HTTP status if applicable
+    receipt = client.create_record(
+        "synthetic-example",
+        operational_context={"ticketId": "DEMO-002"},
+        model={"provider": "synthetic", "modelId": "demo-v1"},
+    )
+except VerifyError as error:
+    print(error.code, error.status_code)
 ```
 
-## Retry Logic
+Capture POSTs are not automatically retried, including after network failures or server errors. A timeout or malformed success response can leave the capture outcome unknown: check the Console before manually resubmitting to avoid duplicates. A response without a nonempty `decisionRecordId` is rejected; the SDK does not invent a receipt.
 
-- Retries on 5xx and network errors (up to `max_retries`, default 2)
-- Exponential backoff: 0.5s, 1s, 2s...
-- Never retries 4xx (client errors)
+Constructor options: `api_key`, `base_url`, `timeout=15`, `max_retries=2`. `max_retries` is retained for compatibility but does not enable capture retries. Use a finite positive socket timeout; it is not a total request deadline. Responses are limited to 1 MiB. Redirects are refused to protect credentials. HTTPS origins are required, except HTTP loopback for local tests.
 
-## Requirements
-
-- Python >= 3.9
-- Zero runtime dependencies (uses `urllib.request` from stdlib)
-
-## Run Tests
+## Verification
 
 ```bash
 pip install pytest
-pytest
+PYTHONPATH=src pytest
 ```
+
+Tests use synthetic fixtures and local transport only. They do not establish live deployment, account entitlement, or end-to-end Console retrieval.
 
 ## License
 
