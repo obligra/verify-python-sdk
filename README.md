@@ -22,9 +22,9 @@ from obligra_verify import VerifyClient
 client = VerifyClient(base_url="https://api.obligra.ai")
 receipt = client.create_record(
     "synthetic-first-record",
-    operational_context={"ticketId": "DEMO-001"},
-    prompt="Synthetic example: classify this demo ticket.",
-    response="Synthetic recommendation: routine review.",
+    operational_context={"decisionId": "DEMO-001"},
+    prompt="Synthetic example: should this fictional decision proceed?",
+    response="Synthetic recommendation: proceed after routine review.",
     model={"provider": "synthetic", "modelId": "demo-v1"},
 )
 print(receipt["decisionRecordId"])
@@ -55,7 +55,7 @@ from obligra_verify import VerifyError
 try:
     receipt = client.create_record(
         "synthetic-example",
-        operational_context={"ticketId": "DEMO-002"},
+        operational_context={"decisionId": "DEMO-002"},
         model={"provider": "synthetic", "modelId": "demo-v1"},
     )
 except VerifyError as error:
