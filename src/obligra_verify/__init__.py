@@ -90,7 +90,7 @@ class VerifyClient:
         Args:
             workflow_id: Required workflow identifier.
             prompt: Input to the AI model.
-            response: Output from the AI model.
+            response: Output from the AI model, submitted as aiAssistedContext.output.
             model: Dict with required 'provider' and 'modelId'.
             operational_context: Additional context fields.
             retrieval_key: Unsupported; use operational_context lookup values.
@@ -120,7 +120,7 @@ class VerifyClient:
         ai = copy.deepcopy(ai_assisted_context) if ai_assisted_context is not None else {}
         if not isinstance(ai, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in ai.items()):
             raise VerifyError("ai_assisted_context must contain string keys and values.", code="INVALID_AI_CONTEXT")
-        for key, value in (("prompt", prompt), ("response", response)):
+        for key, value in (("prompt", prompt), ("output", response)):
             if value is not None:
                 if not isinstance(value, str) or (key in ai and ai[key] != value):
                     raise VerifyError("Prompt/response must be strings and must not conflict with ai_assisted_context.", code="INVALID_AI_CONTEXT")
@@ -189,7 +189,7 @@ class VerifyClient:
                 )
 
     def _request(self, method: str, path: str, body: dict | None = None) -> dict[str, Any]:
-        """Make an HTTP request with retry logic."""
+        """Make an HTTP request; capture POSTs have a single attempt."""
         url = f"{self._base_url}{path}"
         data = json.dumps(body).encode() if body else None
         headers = {
@@ -255,3 +255,4 @@ class VerifyClient:
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise VerifyError("Redirect refused to protect API credentials; check the API origin.", code="REDIRECT_REFUSED")
+

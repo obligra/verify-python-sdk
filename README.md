@@ -8,7 +8,7 @@ Early preview. This is an explicit, server-side capture client, not automatic mo
 pip install git+https://github.com/obligra/verify-python-sdk.git
 ```
 
-Requires Python 3.9 or newer, with no runtime dependencies.
+Requires Python 3.9 or newer, with no runtime dependencies. The earlier SDK revision's full offline suite ran on Python 3.12; other supported versions have not received the same full-suite validation. PyPI publication and Python live acceptance are pending.
 
 ## First synthetic record
 
@@ -39,11 +39,13 @@ Use the API origin, not `/api/v1`. `VERIFY_BASE_URL` is the environment fallback
 - `workflow_id`: required nonblank string, maximum 128 UTF-16 units.
 - `model`: required `provider` (maximum 64) and `modelId` (maximum 128) strings; limits count UTF-16 units to match the API. Label synthetic examples honestly.
 - `operational_context`: short lookup references, up to 20 string values, maximum 128 UTF-16 units per value and 64 per key. Defaults to an empty object. Legacy reserved names `output`, `result`, `completion`, `answer` and `generation` are rejected here; use the top-level `prompt` or `response` arguments for AI text.
-- `prompt` and `response`: optional strings, retained without truncation in `aiAssistedContext`, not lookup fields.
-- `ai_assisted_context`: optional string-to-string dictionary. Conflicting prompt/response values are rejected, not overwritten.
+- `prompt` and `response`: optional strings, submitted without truncation as `aiAssistedContext.prompt` and `aiAssistedContext.output`, which the Console displays as captured input and submitted output.
+- `ai_assisted_context`: optional string-to-string dictionary. Conflicts with the mapped `prompt` or `output` are rejected, not overwritten. Use `output`, rather than `response`, when supplying output directly in this dictionary.
 - Entire serialized payload: maximum 256 KiB. Oversized input is rejected, never silently shortened.
 
 The earlier `retrieval_key`, `metadata` and `idempotency_key` arguments remain recognized but now raise `UNSUPPORTED_FIELD`: the current capture validator does not retain these top-level fields. Put short retrieval values in `operational_context`. Do not rely on server-side deduplication from an idempotency argument.
+
+The SDK does not read source documents, extract chunks, compute source hashes, or verify that submitted text came from a cited source. Your application can supply selected source text, references or precomputed hashes as strings in `ai_assisted_context`, within the payload limit. These are caller-supplied assertions; they are not automatically verified source evidence. Arbitrary context fields are not all displayed by the current Console. Record-integrity verification is separate from checking a source's content or provenance.
 
 `get_record()`, `verify_record()` and `search_records()` raise `CONSOLE_AUTH_REQUIRED`. Those operations require Console authentication; this API-key client does not implement Cognito sessions. Earlier mock tests did not prove API-key access to those operations.
 
@@ -78,3 +80,4 @@ Tests use synthetic fixtures and local transport only. They do not establish liv
 ## License
 
 Apache License 2.0
+
