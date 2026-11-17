@@ -5,8 +5,10 @@ Early preview. This is an explicit, server-side capture client, not automatic mo
 ## Install
 
 ```bash
-pip install git+https://github.com/obligra/verify-python-sdk.git
+pip install obligra-verify==0.1.0
 ```
+
+Version 0.1.0 is published on [PyPI](https://pypi.org/project/obligra-verify/0.1.0/). To install from source instead, use `pip install git+https://github.com/obligra/verify-python-sdk.git`.
 
 Requires Python 3.9 or newer, with no runtime dependencies. The earlier SDK revision's full offline suite ran on Python 3.12; other supported versions have not received the same full-suite validation. See [PyPI](https://pypi.org/project/obligra-verify/) for available releases. A live synthetic Test check is recorded below.
 
