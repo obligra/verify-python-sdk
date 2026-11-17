@@ -8,7 +8,7 @@ Early preview. This is an explicit, server-side capture client, not automatic mo
 pip install git+https://github.com/obligra/verify-python-sdk.git
 ```
 
-Requires Python 3.9 or newer, with no runtime dependencies. The earlier SDK revision's full offline suite ran on Python 3.12; other supported versions have not received the same full-suite validation. PyPI publication and Python live acceptance are pending.
+Requires Python 3.9 or newer, with no runtime dependencies. The earlier SDK revision's full offline suite ran on Python 3.12; other supported versions have not received the same full-suite validation. See [PyPI](https://pypi.org/project/obligra-verify/) for available releases. A live synthetic Test check is recorded below.
 
 ## First synthetic record
 
@@ -76,6 +76,8 @@ PYTHONPATH=src pytest
 ```
 
 Tests use synthetic fixtures and local transport only. They do not establish live deployment, account entitlement, or end-to-end Console retrieval.
+
+On November 17, 2026, a wheel built from [commit 8364617](https://github.com/obligra/verify-python-sdk/commit/83646178aa6800aff57b56863e0ef86ec25fdbdb) completed one live synthetic capture in an existing Test workspace. Console readback exactly matched the 791-character prompt, including its trailing space, the Unicode output, and the submitted retrieval references. One integrity check returned **Passed**, and the temporary test credential was revoked. This check made no model call and did not test fresh-account onboarding or installation from PyPI. Record integrity does not establish source provenance, output correctness, or policy compliance.
 
 ## License
 
